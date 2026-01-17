@@ -253,6 +253,86 @@ static void test_get_ip_truncated(void) {
     assert(!ip);
 }
 
+static void test_adb_devices_serial_with_spaces(void) {
+    char output[] =
+        "List of devices attached\n"
+        "adb-R5CR5131DQT-QhJVaH (2)._adb-tls-connect._tcp device "
+            "product:MyProduct model:MyModel transport_id:1\n";
+
+    struct sc_vec_adb_devices vec = SC_VECTOR_INITIALIZER;
+    bool ok = sc_adb_parse_devices(output, &vec);
+    assert(ok);
+    assert(vec.size == 1);
+
+    struct sc_adb_device *device = &vec.data[0];
+    assert(!strcmp("adb-R5CR5131DQT-QhJVaH (2)._adb-tls-connect._tcp",
+                   device->serial));
+    assert(!strcmp("device", device->state));
+    assert(!strcmp("MyModel", device->model));
+
+    sc_adb_devices_destroy(&vec);
+}
+
+static void test_adb_devices_mixed_serials(void) {
+    char output[] =
+        "List of devices attached\n"
+        "0123456789abcdef	device usb:2-1 product:USBProduct model:USBModel "
+            "transport_id:1\n"
+        "192.168.1.1:5555 device product:TCPProduct model:TCPModel "
+            "transport_id:2\n"
+        "adb-Device Name With Spaces._adb-tls-connect._tcp device "
+            "product:mDNSProduct model:mDNSModel transport_id:3\n";
+
+    struct sc_vec_adb_devices vec = SC_VECTOR_INITIALIZER;
+    bool ok = sc_adb_parse_devices(output, &vec);
+    assert(ok);
+    assert(vec.size == 3);
+
+    struct sc_adb_device *device = &vec.data[0];
+    assert(!strcmp("0123456789abcdef", device->serial));
+    assert(!strcmp("device", device->state));
+    assert(!strcmp("USBModel", device->model));
+
+    device = &vec.data[1];
+    assert(!strcmp("192.168.1.1:5555", device->serial));
+    assert(!strcmp("device", device->state));
+    assert(!strcmp("TCPModel", device->model));
+
+    device = &vec.data[2];
+    assert(!strcmp("adb-Device Name With Spaces._adb-tls-connect._tcp",
+                   device->serial));
+    assert(!strcmp("device", device->state));
+    assert(!strcmp("mDNSModel", device->model));
+
+    sc_adb_devices_destroy(&vec);
+}
+
+static void test_adb_devices_unauthorized_with_spaces(void) {
+    char output[] =
+        "List of devices attached\n"
+        "adb-Serial (With) Spaces._adb-tls-connect._tcp unauthorized "
+            "transport_id:1\n"
+        "normal-serial offline product:Product model:Model transport_id:2\n";
+
+    struct sc_vec_adb_devices vec = SC_VECTOR_INITIALIZER;
+    bool ok = sc_adb_parse_devices(output, &vec);
+    assert(ok);
+    assert(vec.size == 2);
+
+    struct sc_adb_device *device = &vec.data[0];
+    assert(!strcmp("adb-Serial (With) Spaces._adb-tls-connect._tcp",
+                   device->serial));
+    assert(!strcmp("unauthorized", device->state));
+    assert(!device->model);
+
+    device = &vec.data[1];
+    assert(!strcmp("normal-serial", device->serial));
+    assert(!strcmp("offline", device->state));
+    assert(!strcmp("Model", device->model));
+
+    sc_adb_devices_destroy(&vec);
+}
+
 int main(int argc, char *argv[]) {
     (void) argc;
     (void) argv;
@@ -265,6 +345,9 @@ int main(int argc, char *argv[]) {
     test_adb_devices_without_header();
     test_adb_devices_corrupted();
     test_adb_devices_spaces();
+    test_adb_devices_serial_with_spaces();
+    test_adb_devices_mixed_serials();
+    test_adb_devices_unauthorized_with_spaces();
 
     test_get_ip_single_line();
     test_get_ip_single_line_without_eol();

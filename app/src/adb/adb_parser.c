@@ -8,6 +8,27 @@
 #include "util/log.h"
 #include "util/str.h"
 
+// Known device states from "adb devices" output
+static const char *const DEVICE_STATES[] = {
+    "device",
+    "offline",
+    "unauthorized",
+    "authorizing",
+    "connecting",
+    "unknown",
+    NULL
+};
+
+static bool
+is_device_state(const char *token) {
+    for (size_t i = 0; DEVICE_STATES[i]; ++i) {
+        if (!strcmp(token, DEVICE_STATES[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool
 sc_adb_parse_device(char *line, struct sc_adb_device *device) {
     // One device line looks like:
@@ -25,41 +46,80 @@ sc_adb_parse_device(char *line, struct sc_adb_device *device) {
         return false;
     }
 
-    char *s = line; // cursor in the line
+    char *s = line;
 
-    // After the serial:
-    //  - "adb devices" writes a single '\t'
-    //  - "adb devices -l" writes multiple spaces
-    // For flexibility, accept both.
-    size_t serial_len = strcspn(s, " \t");
+    // Serials can contain spaces (e.g., mDNS names), so we can't simply split
+    // on the first space. Instead, find the device state (a known keyword) and
+    // treat everything before it as the serial.
+    // After the serial (which may contain spaces, e.g. mDNS device names):
+    //  - "adb devices" writes a tab before the state
+    //  - "adb devices -l" writes space(s) before the state
+    // We identify the state by its known value (device, offline, etc.)
+    // and treat everything before it as the serial.
+
+    // Find the state by tokenizing and looking for a known state keyword
+    char *state_start = NULL;
+    char *p = s;
+
+    while (*p) {
+        // Skip whitespace
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+
+        // Found start of a token
+        char *token_start = p;
+
+        // Find end of token
+        while (*p && *p != ' ' && *p != '\t') p++;
+
+        // Check if this token is a known state
+        size_t token_len = p - token_start;
+        char saved = *p;
+        *p = '\0';
+
+        if (is_device_state(token_start)) {
+            state_start = token_start;
+            *p = saved;
+            break;
+        }
+
+        *p = saved;
+    }
+
+    if (!state_start) {
+        // No valid state found
+        return false;
+    }
+
+    // Everything before state_start is the serial
+    // Find the end of the serial (trim trailing whitespace before state)
+    char *serial_end = state_start;
+    while (serial_end > s && (serial_end[-1] == ' ' || serial_end[-1] == '\t')) {
+        serial_end--;
+    }
+
+    size_t serial_len = serial_end - s;
     if (!serial_len) {
         // empty serial
         return false;
     }
-    bool eol = s[serial_len] == '\0';
-    if (eol) {
-        // serial alone is unexpected
-        return false;
-    }
-    s[serial_len] = '\0';
-    char *serial = s;
-    s += serial_len + 1;
-    // After the serial, there might be several spaces
-    s += strspn(s, " \t"); // consume all separators
 
-    size_t state_len = strcspn(s, " ");
-    if (!state_len) {
-        // empty state
-        return false;
+    *serial_end = '\0';
+    char *serial = s;
+
+    // state_start already points to the state, null-terminated by tokenization
+    char *state = state_start;
+
+    // Position s after the state for property parsing
+    s = state + strlen(state);
+    bool eol = (*s == '\0');
+    if (!eol) {
+        s++;  // Skip past the current position
+        s += strspn(s, " \t");  // Skip separators
     }
-    eol = s[state_len] == '\0';
-    s[state_len] = '\0';
-    char *state = s;
 
     char *model = NULL;
     if (!eol) {
-        s += state_len + 1;
-
         // Iterate over all properties "key:value key:value ..."
         for (;;) {
             size_t token_len = strcspn(s, " ");

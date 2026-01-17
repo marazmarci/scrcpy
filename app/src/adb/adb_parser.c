@@ -59,6 +59,8 @@ sc_adb_parse_device(char *line, struct sc_adb_device *device) {
 
     // Find the state by tokenizing and looking for a known state keyword
     char *state_start = NULL;
+    char *state_end = NULL;
+    char state_end_char = '\0';  // Save the character after state for eol check
     char *p = s;
 
     while (*p) {
@@ -73,13 +75,14 @@ sc_adb_parse_device(char *line, struct sc_adb_device *device) {
         while (*p && *p != ' ' && *p != '\t') p++;
 
         // Check if this token is a known state
-        size_t token_len = p - token_start;
         char saved = *p;
         *p = '\0';
 
         if (is_device_state(token_start)) {
             state_start = token_start;
-            *p = saved;
+            state_end = p;
+            state_end_char = saved;  // Save for eol check
+            // Don't restore *p here - state must remain null-terminated
             break;
         }
 
@@ -111,10 +114,11 @@ sc_adb_parse_device(char *line, struct sc_adb_device *device) {
     char *state = state_start;
 
     // Position s after the state for property parsing
-    s = state + strlen(state);
-    bool eol = (*s == '\0');
+    // Use state_end (saved position) instead of strlen since state is null-terminated
+    s = state_end;
+    bool eol = (state_end_char == '\0');  // Check saved character, not current
     if (!eol) {
-        s++;  // Skip past the current position
+        s++;  // Skip past the null terminator we placed
         s += strspn(s, " \t");  // Skip separators
     }
 
